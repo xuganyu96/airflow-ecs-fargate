@@ -3,7 +3,7 @@
     - [x] Validate with local setup
 
 - [ ] A barebone cluster
-    - [ ] Upload `dags`, `plugins`, `configs`, and `webserver_config.py` to AWS S3
+    - [ ] Upload `dags`, `plugins`, `config`, and `webserver_config.py` to AWS S3
     - [ ] Run an AWS RDS instance and use Airflow CLI to initialize it
     - [ ] Task definition, use `LocalExecutor` at first, but separate `webserver` from `scheduler`
     - [ ] Use EFS to mount `dags`, `plugins`, `configs`, `webserver_config.py` from S3 onto the containers
@@ -60,3 +60,34 @@ For testing purposes:
 - Within `config/` we will define a JSON formatter that log messages in jsonified strings and apply the formatter to the webserver, the scheduler, and the tasks
 
 At this point, the code base is ready for deployment. We will move on to do things on AWS.
+
+# AWS Setup
+We will not cover some of the most basic setup for an AWS account, such as setting up an admin account instead of using a root account all the time, and getting access keys for programmatic access. The access keys and secret keys should be stored under `~/.aws/credentials` and they should be applied using the `--profile` or the `AWS_PROFILE` environment variable. We will use AWS CLI v2 in this walkthrough.
+
+## Create source code bucket
+We will use an S3 bucket to store Airflow cluster's source code:
+
+- `dags` directory
+- `plugins` directory
+- `config` directory
+- `webserver_config.py` file
+
+Creating the bucket and uploading code onto the bucket will be implemented using AWS CLI. Note that object versioning will not be enabled since this bucket is not meant to be a source of truth.
+
+```bash
+export AIRFLOW_SRC_BUCKET="69420-airflow-src-repo"
+
+# Create the bucket
+aws s3api create-bucket --bucket ${AIRFLOW_SRC_BUCKET} --create-bucket-configuration "LocationConstraint=us-west-2"
+
+# Upload code
+aws s3 cp --recursive --exclude "**__pycache__**" airflow_home/dags s3://${AIRFLOW_SRC_BUCKET}/dags
+aws s3 cp --recursive --exclude "**__pycache__**" airflow_home/plugins s3://${AIRFLOW_SRC_BUCKET}/plugins
+aws s3 cp --recursive --exclude "**__pycache__**" airflow_home/config s3://${AIRFLOW_SRC_BUCKET}/config
+aws s3 cp airflow_home/webserver_config.py s3://${AIRFLOW_SRC_BUCKET}/webserver_config.py
+
+
+# Bucket must be emptied before it can be deleted
+aws s3 rm s3://${AIRFLOW_SRC_BUCKET} --recursive
+aws s3api delete-bucket --bucket ${AIRFLOW_SRC_BUCKET}
+```
