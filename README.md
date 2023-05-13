@@ -5,10 +5,11 @@
 - [ ] A barebone cluster
     - [ ] Upload `dags`, `plugins`, `config`, and `webserver_config.py` to AWS S3
     - [ ] Run an AWS RDS instance and use Airflow CLI to initialize it
+    - [ ] Extend Airflow's official image and manage the image on AWS ECR
     - [ ] Task definition, use `LocalExecutor` at first, but separate `webserver` from `scheduler`
     - [ ] Use EFS to mount `dags`, `plugins`, `configs`, `webserver_config.py` from S3 onto the containers
     - [ ] Validation from the browser: DAG runs, plugins, CloudWatch logs
-    - [ ] Teardown: S3, RDS, ECS, EFS, CloudWatch
+    - [ ] Teardown: S3, ECR, RDS, ECS, EFS, CloudWatch
 
 - [ ] A branch environment
     - [ ] Run a Postgres container on ECS Fargate, use Airflow CLI to initialize it
