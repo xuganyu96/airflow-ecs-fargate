@@ -3,9 +3,9 @@
     - [x] Validate with local setup
 
 - [ ] A barebone cluster
-    - [ ] Upload `dags`, `plugins`, `config`, and `webserver_config.py` to AWS S3
+    - [x] Upload `dags`, `plugins`, `config`, and `webserver_config.py` to AWS S3
+    - [X] Extend Airflow's official image and manage the image on AWS ECR
     - [ ] Run an AWS RDS instance and use Airflow CLI to initialize it
-    - [ ] Extend Airflow's official image and manage the image on AWS ECR
     - [ ] Task definition, use `LocalExecutor` at first, but separate `webserver` from `scheduler`
     - [ ] Use EFS to mount `dags`, `plugins`, `configs`, `webserver_config.py` from S3 onto the containers
     - [ ] Validation from the browser: DAG runs, plugins, CloudWatch logs
@@ -91,4 +91,94 @@ aws s3 cp airflow_home/webserver_config.py s3://${AIRFLOW_SRC_BUCKET}/webserver_
 # Bucket must be emptied before it can be deleted
 aws s3 rm s3://${AIRFLOW_SRC_BUCKET} --recursive
 aws s3api delete-bucket --bucket ${AIRFLOW_SRC_BUCKET}
+```
+
+## Extend Airflow's Docker image
+We can extend the official `apache/airflow:2.5.3-python3.10` image by building our own image with the official image as a base image. A typical extension is to install additional Python packages:
+
+```Dockerfile
+ARG BASE_IMG="apache/airflow:2.5.3-python3.10"
+
+FROM ${BASE_IMG}
+
+COPY requirements.txt ./requirements.txt
+
+RUN pip install --upgrade pip wheel setuptools \
+    && pip install -r requirements.txt
+```
+
+To build the image, use the `docker build` command. We will later push this image to a private repository on AWS ECR so it's okay to name it something similar:
+
+```bash
+docker build -t airflow:2.5.3-python3.10 .
+```
+
+Before we can push the image, a Docker image repository must first exist:
+
+```bash
+aws ecr create-repository --repository-name "${ECR_REPO_NAME}"
+```
+
+Upon creating the repository, the command should return some JSON object describing the newly created repository. Note the repository URI as we will need to use it later.
+
+```json
+{
+    "repository": {
+        "repositoryArn": "arn:aws:ecr:${AWS_REGION}:${AWS_ACCOUNT_ID}:repository/${ECR_REPO_NAME}",
+        "registryId": "${AWS_ACCOUNT_ID}",
+        "repositoryName": "${ECR_REPO_NAME}",
+        "repositoryUri": "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}",
+        "createdAt": "2023-05-14T22:41:09-07:00",
+        "imageTagMutability": "MUTABLE",
+        "imageScanningConfiguration": {
+            "scanOnPush": false
+        },
+        "encryptionConfiguration": {
+            "encryptionType": "AES256"
+        }
+    }
+}
+```
+
+Then we need to obtain credentials to AWS ECR and pass it to docker:
+
+```bash
+aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+```
+
+Tag the Docker image we want to push with the ECR repository URI:
+
+```bash
+docker tag airflow:2.5.3-python3.10 ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}:airflow2.5.3-python3.10
+```
+
+Now we are ready to push:
+
+```bash
+docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}:airflow2.5.3-python3.10
+```
+
+For a complete teardown, we can force delete the repository:
+
+```bash
+aws ecr delete-repository --repository-name ${ECR_REPO_NAME} --force
+```
+
+To summarize into a single script:
+
+```bash
+export AWS_ACCOUNT_ID="..."
+export AWS_REGION="..."
+export ECR_REPO_NAME="airflow"
+
+# Create repository
+aws ecr create-repository --repository-name "${ECR_REPO_NAME}"
+
+# Login, build, and push
+aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+docker build -t ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}:2.5.3-python3.10 .
+docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}:2.5.3-python3.10
+
+# Teardown
+aws ecr delete-repository --repository-name ${ECR_REPO_NAME} --force
 ```
