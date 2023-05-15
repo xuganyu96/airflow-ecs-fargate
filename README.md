@@ -5,7 +5,7 @@
 - [ ] A barebone cluster
     - [x] Upload `dags`, `plugins`, `config`, and `webserver_config.py` to AWS S3
     - [X] Extend Airflow's official image and manage the image on AWS ECR
-    - [ ] Run an AWS RDS instance and use Airflow CLI to initialize it
+    - [x] Run an AWS RDS instance and run an Airflow cluster against it
     - [ ] Task definition, use `LocalExecutor` at first, but separate `webserver` from `scheduler`
     - [ ] Use EFS to mount `dags`, `plugins`, `configs`, `webserver_config.py` from S3 onto the containers
     - [ ] Validation from the browser: DAG runs, plugins, CloudWatch logs
@@ -181,4 +181,87 @@ docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAM
 
 # Teardown
 aws ecr delete-repository --repository-name ${ECR_REPO_NAME} --force
+```
+
+## RDS and DB initialization
+For a production environment, Airflow recommends using MySQL 8+ or PostgreSQL as a backend, and we will use AWS RDS to host the database.
+
+Before creating the RDS instance, we first need to configure a VPC security group that allows inbound traffic through the PostgreSQL port. Security groups are free, so there is no need for immediate teardown when we are done
+
+```bash
+# Note the security group's ID, which we will use for creating RDS instance
+aws ec2 create-security-group \
+    --description "For AWS RDS PostgreSQL" \
+    --group-name "rds-postgres"
+
+aws ec2 authorize-security-group-ingress \
+    --group-name "rds-postgres" \
+    --protocol tcp \
+    --port 5432 \
+    --cidr 0.0.0.0/0
+
+# SGs are free so there is no need to delete them immediately, but just FYI
+aws ec2 delete-security-group \
+    --group-name "rds-postgres"
+```
+
+Launch a PostgreSQL database. `db.t4g.micro` costs $0.016 per hour ($12 per month) with 10GB of storage to boot. Securing credentials is out of scope of this 
+
+```bash
+export SG_ID=""
+export RDS_INSTANCE_ID="airflow-db"
+export AIRFLOW_DB_USER="airflow_u"
+export AIRFLOW_DB_PASSWORD="airflow_password"
+
+aws rds create-db-instance --db-instance-identifier ${RDS_INSTANCE_ID} \
+    --db-name "airflow" \
+    --db-instance-class "db.t4g.micro" \
+    --engine postgres \
+    --master-username ${AIRFLOW_DB_USER} \
+    --master-user-password ${AIRFLOW_DB_PASSWORD} \
+    --allocated-storage 10 \
+    --vpc-security-group-ids ${SG_ID}
+
+export RDS_ENDPOINT=$(aws rds describe-db-instances \
+    --db-instance-identifier ${RDS_INSTANCE_ID} \
+    --output text \
+    --no-paginate \
+    --query "DBInstances[0].Endpoint.Address")
+
+# The DB instance can take some time to initialize (a few minutes). Validate
+# the instance by connecting to it
+PGPASSWORD=${AIRFLOW_DB_PASSWORD} \
+psql -h ${RDS_ENDPOINT} -U ${AIRFLOW_DB_USER} -d airflow
+```
+
+Export the connection string alongside some other configurations, then use Airflow CLI to initialize the database. Note that in production environment we will need to use a Fernet key to encrypt user credentials, Airflow connections, Airflow variables, and other things, but for this experiment it's okay to not use any encryption.
+
+```bash
+export AIRFLOW__DATABASE__SQL_ALCHEMY_CONN="postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@${RDS_ENDPOINT}:5432/airflow"
+export AIRFLOW__CORE__EXECUTOR="LocalExecutor"
+export AIRFLOW__CORE__LOAD_EXAMPLES="False"
+export AIRFLOW__CORE__PARALLELISM="4"
+export AIRFLOW_HOME=$(pwd)/airflow_home
+
+# Initialize the database and create the admin user
+airflow db init
+airflow users create \
+    --email admin@airflow.org \
+    --firstname Apache \
+    --lastname Airflow \
+    --role Admin \
+    --username airflow \
+    --password airflow
+# Validate by running the webserver and logging in
+airflow webserver
+airflow scheduler
+```
+
+Finally, we can teardown the database.
+
+```bash
+aws rds delete-db-instance \
+    --db-instance-identifier ${RDS_INSTANCE_ID} \
+    --skip-final-snapshot \
+    --delete-automated-backups
 ```
