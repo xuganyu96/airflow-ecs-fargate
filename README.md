@@ -6,7 +6,8 @@
     - [x] Upload `dags`, `plugins`, `config`, and `webserver_config.py` to AWS S3
     - [X] Extend Airflow's official image and manage the image on AWS ECR
     - [x] Run an AWS RDS instance and run an Airflow cluster against it
-    - [ ] Task definition, use `LocalExecutor` at first, but separate `webserver` from `scheduler`
+    - [x] Run `airflow standalone` on ECS Fargate and reach it from a browser
+    - [ ] Run Airflow webserver and scheduler, but using ECR and RDS as well
     - [ ] Use EFS to mount `dags`, `plugins`, `configs`, `webserver_config.py` from S3 onto the containers
     - [ ] Validation from the browser: DAG runs, plugins, CloudWatch logs
     - [ ] Teardown: S3, ECR, RDS, ECS, EFS, CloudWatch
@@ -264,4 +265,61 @@ aws rds delete-db-instance \
     --db-instance-identifier ${RDS_INSTANCE_ID} \
     --skip-final-snapshot \
     --delete-automated-backups
+```
+
+## ECS cluster and tasks
+- [ ] Connect webserver and scheduler to the RDS instance and run an example DAG using `LocalExecutor`
+
+```bash
+# Because a wind farm uses Airflow to generate POWAAARRRRR
+export ECS_CLUSTER_NAME="wind-farm"
+
+aws ecs create-cluster --cluster-name ${ECS_CLUSTER_NAME}
+aws ecs delete-cluster --cluster ${ECS_CLUSTER_NAME}
+```
+
+Before we can run the webserver task, we need to define a task definition, which requires the following argument:
+
+- Name of the task definition: `airflow`
+- Container 1 (the essential contianer)  
+we will start with the official image just to run the webserver
+    - Name: `webserver`
+    - Image URI: `apache/airflow:2.5.3-python3.10`
+    - Command: `standalone`
+
+The equivalent task definition JSON is stored [here](./airflow-standalone-task-definition.json)
+
+```bash
+export TASK_DEF_REVISION=$(aws ecs register-task-definition \
+    --cli-input-json file://$(pwd)/airflow-standalone-task-definition.json \
+    --query "taskDefinition.revision")
+
+
+# Similar to security groups, there is no additional charge on creating
+# task definitions, but just in case:
+aws ecs deregister-task-definition \
+    --task-definition airflow:${TASK_DEF_REVISION}
+```
+
+To run the task:
+
+```bash
+# Make sure that the security group allows the port 8080!
+aws ecs run-task \
+    --cluster ${ECS_CLUSTER_NAME} \
+    --launch-type FARGATE \
+    --network-configuration file://$(pwd)/ecs-network-configuration.json \
+    --task-definition airflow:${TASK_DEF_REVISION}
+
+# TODO: How do I capture the Task ARN to be used later for "stop-task"?
+```
+
+Since the network configuration enabled assigning public IPs, we can simply use the public IP to reach the webserver and log in using the credentials obtained from the logs.
+
+To stop the task:
+
+```bash
+aws ecs stop-task \
+    --cluster ${ECS_CLUSTER_NAME} \
+    --task ${TASK_ID}
 ```
