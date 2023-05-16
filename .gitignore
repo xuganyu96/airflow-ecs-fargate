@@ -131,3 +131,6 @@ dmypy.json
 # Airflow
 logs/
 airflow.cfg
+
+# Sensitive AWS configurations
+ecs-vpc-config.json
