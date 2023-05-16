@@ -32,7 +32,7 @@
         }
     ],
     "family": "airflow",
-    "executionRoleArn": "arn:aws:iam::317801972934:role/ecsTaskExecutionRole",
+    "executionRoleArn": "arn:aws:iam::AWS_ACCOUNT_ID:role/ecsTaskExecutionRole",
     "networkMode": "awsvpc",
     "volumes": [],
     "placementConstraints": [],
