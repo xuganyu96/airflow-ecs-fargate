@@ -132,7 +132,7 @@ def generate_task_definition(
                 "logConfiguration": {
                     "logDriver": "awslogs",
                     "options": {
-                        "awslogs-group": "/ecs/airflow",
+                        "awslogs-group": getenv_or_exit("ECS_LOG_GROUP"),
                         "awslogs-create-group": "true",
                         "awslogs-region": "us-west-2",
                         "awslogs-stream-prefix": "ecs"

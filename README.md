@@ -90,6 +90,8 @@ The TL;DR is as follows:
 
 ```bash
 # chmod +x run.sh
+# Make sure your virtual environment is active since some of commands run
+# Python scripts that use external libraries like boto3 and airflow
 # source .env
 
 # Setup, in this order

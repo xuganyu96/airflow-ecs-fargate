@@ -41,6 +41,10 @@ if [[ -z $ECS_CLUSTER_NAME ]]; then
     echo "Please set ECS_CLUSTER_NAME"
     exit 1
 fi
+if [[ -z $ECS_LOG_GROUP ]]; then
+    echo "Please set ECS_LOG_GROUP"
+    exit 1
+fi
 
 
 case $1 in
@@ -92,6 +96,8 @@ case $1 in
     select yn in "Yes" "No"; do
         case $yn in
         Yes )
+            # TODO: Make airflow-initialize idempotent: check if airflow is
+            # already initialized and only initialize if not initialized already
             airflow db init
             airflow users create \
                 --email admin@airflow.org \
@@ -100,6 +106,7 @@ case $1 in
                 --role Admin \
                 --username airflow \
                 --password airflow
+            exit 0
         ;;
         No ) exit;;
         esac
@@ -135,6 +142,12 @@ case $1 in
     python generate_task_definition.py > task_def.json
     aws ecs register-task-definition --cli-input-json file://$(pwd)/task_def.json
     rm task_def.json
+;;
+"create-ecs-log-group")
+    aws logs create-log-group --log-group-name ${ECS_LOG_GROUP}
+;;
+"delete-ecs-log-group")
+    aws logs delete-log-group --log-group-name ${ECS_LOG_GROUP}
 ;;
 "deregister-task-definition")
     # NOTE: Kind of optional since task definitions are free
