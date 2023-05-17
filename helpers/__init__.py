@@ -99,7 +99,11 @@ def generate_task_definition(
         {
             "name": "AIRFLOW__DATABASE__LOAD_DEFAULT_CONNECTIONS",
             "value": "false"
-        }
+        },
+        {
+            "name": "AIRFLOW__LOGGING__LOGGING_CONFIG_CLASS",
+            "value": "log_config.LOG_CONFIG",
+        },
     ]
 
     return {
