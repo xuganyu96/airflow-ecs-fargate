@@ -45,6 +45,10 @@ if [[ -z $ECS_LOG_GROUP ]]; then
     echo "Please set ECS_LOG_GROUP"
     exit 1
 fi
+if [[ -z $REMOTE_LOGGING_BUCKET ]]; then
+    echo "Please set REMOTE_LOGGING_BUCKET"
+    exit 1
+fi
 
 
 case $1 in
@@ -148,6 +152,20 @@ case $1 in
 ;;
 "delete-ecs-log-group")
     aws logs delete-log-group --log-group-name ${ECS_LOG_GROUP}
+;;
+"create-remote-logging-bucket")
+    aws s3api create-bucket --bucket ${REMOTE_LOGGING_BUCKET} \
+        --create-bucket-configuration "LocationConstraint=${AWS_REGION}"
+;;
+"check-remote-logging-bucket")
+    aws s3api head-bucket --bucket ${REMOTE_LOGGING_BUCKET}
+    if [[ $? == "0" ]]; then
+        echo "s3://${REMOTE_LOGGING_BUCKET} can be reached"
+    fi
+;;
+"delete-remote-logging-bucket")
+    aws s3 rm --recursive s3://${REMOTE_LOGGING_BUCKET}
+    aws s3api delete-bucket --bucket ${REMOTE_LOGGING_BUCKET}
 ;;
 "deregister-task-definition")
     # NOTE: Kind of optional since task definitions are free
