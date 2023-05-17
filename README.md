@@ -10,6 +10,10 @@
     - [x] Validation from the browser: DAG runs, plugins, CloudWatch logs
     - [x] Teardown: S3, ECR, RDS, ECS, EFS, CloudWatch
 
+- [x] [S3 remote logging](#s3-remote-logging)
+    - [x] Create, check, and delete remote logging bucket
+    - [x] Write task logs to the remote logging bucket
+
 - [ ] ECS Fargate Executor
     - [ ] Switch Airflow's executor to ECS Fargate Executor
 
@@ -102,6 +106,9 @@ The TL;DR is as follows:
 ./run.sh airflow-initialize
 ./run.sh login-to-rds
 ./run.sh create-ecs-cluster
+./run.sh create-task-role
+./run.sh create-ecs-log-group
+./run.sh create-remote-logging-bucket
 ./run.sh register-task-definition
 ./run.sh run-task
 
@@ -110,4 +117,46 @@ The TL;DR is as follows:
 ./run.sh delete-ecs-cluster
 ./run.sh delete-rds-instance
 ./run.sh delete-ecr-repository
+./run.sh delete-task-role
+./run.sh delete-ecs-log-group
+./run.sh delete-remote-logging-bucket
 ```
+
+## S3 Remote logging
+According to [Amazon's documentation](https://airflow.apache.org/docs/apache-airflow-providers-amazon/stable/logging/s3-task-handler.html), we need the following configurations to set remote logging to S3.
+
+```ini
+[logging]
+# Airflow can store logs remotely in AWS S3. Users must supply a remote
+# location URL (starting with either 's3://...') and an Airflow connection
+# id that provides access to the storage location.
+remote_logging = True
+remote_base_log_folder = s3://my-bucket/path/to/logs
+remote_log_conn_id = my_s3_conn
+# Use server-side encryption for logs stored in S3
+encrypt_s3_logs = False
+```
+
+These configurations can be added using environment variables in the task definition. After the task definition is added, we register a new revision.
+
+We also need to add an Airflow connection that will be used for authenticating with AWS. The connection will not contain access keys or secret keys; instead, we rely on the IAM role assigned to the ECS task.
+
+```bash
+# S3_hook("remote_log_s3") will inherit the ECS Task's IAM role
+airflow connections add --conn-type aws ${REMOTE_LOGGING_CONN_ID}
+```
+
+Then run the container on Fargate with `./run.sh run-task`. At first, after triggering a DAG, we check CloudWatch for logs:
+
+* Task logs written to STDOUT (in JSON format) are successfully captured by CloudWatch
+* Task logs written to file could not be written to S3. The error message is as follows:
+
+> Failed attempt to write logs to `s3://airflow-remote-log-repository/stage_airflow/dag_id=tutorial_taskflow_api/run_id=manual__2023-05-17T21:21:19.044329+00:00/task_id=extract/attempt=1.log`, will retry
+
+This is probably because the default `ecsTaskExecutionRole` does not have IAM permission to write logs to the logging bucket. We will need to create an appropriate IAM role that the Airflow task can assume. This role will be extended from the default `ecsTaskExecutionRole` but with added access to read from and write to the `${REMOTE_LOGGING_BUCKET}`.
+
+* Create role `ecsAirflowRole`
+* Attach policy `AmazonECSTaskExecutionRolePolicy`
+* Attach policy `AmazonS3FullAccess` (TODO: create a more restricted policy!)
+
+After that the task definition needs to be updated again to use the new `${ECS_TASK_ROLE}`. Register the updated task definition, then run the task. Now it works

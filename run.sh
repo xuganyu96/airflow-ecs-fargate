@@ -49,7 +49,18 @@ if [[ -z $REMOTE_LOGGING_BUCKET ]]; then
     echo "Please set REMOTE_LOGGING_BUCKET"
     exit 1
 fi
-
+if [[ -z $REMOTE_LOGGING_CONN_ID ]]; then
+    echo "Please set REMOTE_LOGGING_CONN_ID"
+    exit 1
+fi
+if [[ -z $ECS_TASK_ROLE ]]; then
+    echo "Please set ECS_TASK_ROLE"
+    exit 1
+fi
+if [[ -z $TASK_DEFINITION_FAMILY ]]; then
+    echo "Please set TASK_DEFINITION_FAMILY"
+    exit 1
+fi
 
 case $1 in
 "create-ecr-repository")
@@ -76,8 +87,12 @@ case $1 in
     --vpc-security-group-ids ${RDS_SG_ID}
 ;;
 "get-rds-endpoint")
-    export RDS_ENDPOINT="null"
-    while [ ${RDS_ENDPOINT} == "null" ]
+    export RDS_ENDPOINT=$(aws rds describe-db-instances \
+    --db-instance-identifier ${RDS_INSTANCE_ID} \
+    --query "DBInstances[0].Endpoint.Address" \
+    | tr -d '"')
+    echo "$(date): RDS Endpoint is ${RDS_ENDPOINT}"
+    while [[ ${RDS_ENDPOINT} == "null" ]]
     do
         export RDS_ENDPOINT=$(aws rds describe-db-instances \
         --db-instance-identifier ${RDS_INSTANCE_ID} \
@@ -138,14 +153,25 @@ case $1 in
 "delete-ecs-cluster")
     aws ecs delete-cluster --cluster ${ECS_CLUSTER_NAME}
 ;;
-"register-task-definition")
-    # TODO: add a revision to the task definition ${TASK_DEFINITION_FAMILY}
-    #
-    # TODO: use a Python script to generate the task definition JSON, then
-    # use AWS CLI to register it
-    python generate_task_definition.py > task_def.json
-    aws ecs register-task-definition --cli-input-json file://$(pwd)/task_def.json
-    rm task_def.json
+"create-task-role")
+    aws iam create-role --role-name ${ECS_TASK_ROLE} \
+        --assume-role-policy-document file://$(pwd)/trust-relationships.json
+    aws iam attach-role-policy \
+        --role-name ${ECS_TASK_ROLE} \
+        --policy-arn "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+    aws iam attach-role-policy \
+        --role-name ${ECS_TASK_ROLE} \
+        --policy-arn "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+;;
+"delete-task-role")
+    aws iam detach-role-policy \
+        --role-name ${ECS_TASK_ROLE} \
+        --policy-arn "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+    aws iam detach-role-policy \
+        --role-name ${ECS_TASK_ROLE} \
+        --policy-arn "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+    aws iam delete-role \
+        --role-name ${ECS_TASK_ROLE}
 ;;
 "create-ecs-log-group")
     aws logs create-log-group --log-group-name ${ECS_LOG_GROUP}
@@ -167,22 +193,42 @@ case $1 in
     aws s3 rm --recursive s3://${REMOTE_LOGGING_BUCKET}
     aws s3api delete-bucket --bucket ${REMOTE_LOGGING_BUCKET}
 ;;
+"register-task-definition")
+    python generate_task_definition.py > task_def.json
+    aws ecs register-task-definition --cli-input-json file://$(pwd)/task_def.json
+    rm task_def.json
+;;
 "deregister-task-definition")
     # NOTE: Kind of optional since task definitions are free
     # TODO: teardown all active revisions of ${TASK_DEFINITION_FAMILY}
 ;;
 "run-task")
-    # TODO: deploy a task to the ECS cluster ${ECS_CLUSTER_NAME}
     python generate_ecs_network_config.py > network_config.json
     
-    aws ecs run-task \
+    export TASK_ARN=$(aws ecs run-task \
         --cluster ${ECS_CLUSTER_NAME} \
         --count 1 \
         --launch-type "FARGATE" \
         --network-configuration file://$(pwd)/network_config.json \
-        --task-definition "airflow"
-
+        --task-definition ${TASK_DEFINITION_FAMILY} \
+        --query "tasks[0].taskArn" | tr -d '"')
     rm network_config.json
+    
+    # Block until task is running
+    export LAST_STATUS=$(aws ecs describe-tasks \
+        --cluster ${ECS_CLUSTER_NAME} \
+        --tasks ${TASK_ARN} --query "tasks[0].lastStatus" | tr -d '"'
+    )
+    while [[ ${LAST_STATUS} != "RUNNING" ]]
+    do
+        export LAST_STATUS=$(aws ecs describe-tasks \
+            --cluster ${ECS_CLUSTER_NAME} \
+            --tasks ${TASK_ARN} --query "tasks[0].lastStatus" | tr -d '"'
+        )
+        echo "`date` Task ${TASK_ARN}'s last status is ${LAST_STATUS}"
+        sleep 10
+    done
+
 ;;
 "stop-all-tasks")
     python stop_all_tasks.py

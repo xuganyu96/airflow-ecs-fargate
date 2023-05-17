@@ -1,3 +1,4 @@
+from ctypes import POINTER
 import os
 import sys
 
@@ -74,6 +75,9 @@ def generate_task_definition(
     sqla_uri = f"postgresql+psycopg2://" \
     f"{airflow_rds_user}:{airflow_rds_password}" \
     f"@{rds_endpoint}:5432/{airflow_rds_db}"
+    remote_logging_bucket = getenv_or_exit("REMOTE_LOGGING_BUCKET")
+    remote_logging_conn_id = getenv_or_exit("REMOTE_LOGGING_CONN_ID")
+    ecs_task_role = getenv_or_exit("ECS_TASK_ROLE")
 
     env_vars = [
         {
@@ -104,10 +108,26 @@ def generate_task_definition(
             "name": "AIRFLOW__LOGGING__LOGGING_CONFIG_CLASS",
             "value": "log_config.LOG_CONFIG",
         },
+        {
+            "name": "AIRFLOW__LOGGING__REMOTE_LOGGING",
+            "value": "True",
+        },
+        {
+            "name": "AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER",
+            "value": f"s3://{remote_logging_bucket}/stage_airflow",
+        },
+        {
+            "name": "AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID",
+            "value": remote_logging_conn_id,
+        },
+        {
+            "name": "AIRFLOW__LOGGING__ENCRYPT_S3_LOG",
+            "value": "False",
+        },
     ]
 
     return {
-        "family": "airflow",
+        "family": getenv_or_exit("TASK_DEFINITION_FAMILY"),
         "containerDefinitions": [
             {
                 "name": "webserver",
@@ -163,8 +183,8 @@ def generate_task_definition(
                 }
             }
         ],
-        "taskRoleArn": f"arn:aws:iam::{aws_account_id}:role/ecsTaskExecutionRole",
-        "executionRoleArn": f"arn:aws:iam::{aws_account_id}:role/ecsTaskExecutionRole",
+        "taskRoleArn": f"arn:aws:iam::{aws_account_id}:role/{ecs_task_role}",
+        "executionRoleArn": f"arn:aws:iam::{aws_account_id}:role/{ecs_task_role}",
         "networkMode": "awsvpc",
         "requiresCompatibilities": [
             "FARGATE"
