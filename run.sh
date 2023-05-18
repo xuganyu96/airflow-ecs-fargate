@@ -57,8 +57,12 @@ if [[ -z $ECS_TASK_ROLE ]]; then
     echo "Please set ECS_TASK_ROLE"
     exit 1
 fi
-if [[ -z $TASK_DEFINITION_FAMILY ]]; then
-    echo "Please set TASK_DEFINITION_FAMILY"
+if [[ -z $AIRFLOW_CORE_TASK_DEF ]]; then
+    echo "Please set AIRFLOW_CORE_TASK_DEF"
+    exit 1
+fi
+if [[ -z $AIRFLOW_WORKER_TASK_DEF ]]; then
+    echo "Please set AIRFLOW_WORKER_TASK_DEF"
     exit 1
 fi
 
@@ -111,25 +115,21 @@ case $1 in
     | tr -d '"')
     export AIRFLOW__DATABASE__SQL_ALCHEMY_CONN="postgresql+psycopg2://${AIRFLOW_RDS_USER}:${AIRFLOW_RDS_PASSWORD}@${RDS_ENDPOINT}:5432/airflow"
     export AIRFLOW_HOME=$(pwd)/airflow_home
-    echo "Airflow's URI is: ${AIRFLOW__DATABASE__SQL_ALCHEMY_CONN}. Continue?"
-    select yn in "Yes" "No"; do
-        case $yn in
-        Yes )
-            # TODO: Make airflow-initialize idempotent: check if airflow is
-            # already initialized and only initialize if not initialized already
-            airflow db init
-            airflow users create \
-                --email admin@airflow.org \
-                --firstname Apache \
-                --lastname Airflow \
-                --role Admin \
-                --username airflow \
-                --password airflow
-            exit 0
-        ;;
-        No ) exit;;
-        esac
-    done
+
+    # TODO: Make airflow-initialize idempotent: check if airflow is
+    # already initialized and only initialize if not initialized already
+    airflow db init
+    airflow users create \
+        --email admin@airflow.org \
+        --firstname Apache \
+        --lastname Airflow \
+        --role Admin \
+        --username airflow \
+        --password airflow
+    airflow connections add \
+        --conn-type aws \
+        remote_log_s3
+    exit 0
 ;;
 "login-to-rds")
     export RDS_ENDPOINT=$(aws rds describe-db-instances \
@@ -162,8 +162,14 @@ case $1 in
     aws iam attach-role-policy \
         --role-name ${ECS_TASK_ROLE} \
         --policy-arn "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+    aws iam attach-role-policy \
+        --role-name ${ECS_TASK_ROLE} \
+        --policy-arn "arn:aws:iam::aws:policy/AmazonECS_FullAccess"
 ;;
 "delete-task-role")
+    aws iam detach-role-policy \
+        --role-name ${ECS_TASK_ROLE} \
+        --policy-arn "arn:aws:iam::aws:policy/AmazonECS_FullAccess"
     aws iam detach-role-policy \
         --role-name ${ECS_TASK_ROLE} \
         --policy-arn "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
@@ -194,7 +200,11 @@ case $1 in
     aws s3api delete-bucket --bucket ${REMOTE_LOGGING_BUCKET}
 ;;
 "register-task-definition")
-    python generate_task_definition.py > task_def.json
+    python generate_airflow_core_task_def.py > task_def.json
+    aws ecs register-task-definition --cli-input-json file://$(pwd)/task_def.json
+    rm task_def.json
+
+    python generate_airflow_worker_task_def.py > task_def.json
     aws ecs register-task-definition --cli-input-json file://$(pwd)/task_def.json
     rm task_def.json
 ;;
@@ -210,7 +220,7 @@ case $1 in
         --count 1 \
         --launch-type "FARGATE" \
         --network-configuration file://$(pwd)/network_config.json \
-        --task-definition ${TASK_DEFINITION_FAMILY} \
+        --task-definition ${AIRFLOW_CORE_TASK_DEF} \
         --query "tasks[0].taskArn" | tr -d '"')
     rm network_config.json
     

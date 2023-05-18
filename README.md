@@ -1,8 +1,8 @@
-- [x] Setup a sample code base
+- [x] [Setup a sample code base](#developer-setup)
     - [x] A simple DAG, simple `Flask-AppBuilder` plugin, Airflow config, and `webserver_config`
     - [x] Validate with local setup
 
-- [x] A barebone cluster
+- [x] [A barebone cluster](#barebone-cluster)
     - [X] Extend Airflow's official image and manage the image on AWS ECR
     - [x] Run an AWS RDS instance and run an Airflow cluster against it
     - [x] Run `airflow standalone` on ECS Fargate and reach it from a browser
@@ -14,8 +14,8 @@
     - [x] Create, check, and delete remote logging bucket
     - [x] Write task logs to the remote logging bucket
 
-- [ ] ECS Fargate Executor
-    - [ ] Switch Airflow's executor to ECS Fargate Executor
+- [x] [ECS Fargate Executor](#ecs-fargate-executor)
+    - [x] Switch Airflow's executor to ECS Fargate Executor
 
 - [ ] A branch environment
     - [ ] Run a Postgres container on ECS Fargate, use Airflow CLI to initialize it
@@ -76,20 +76,26 @@ The development environment needs the following environment variables (I choose 
 
 |name|notes|
 |:--|:--|
-|AWS_PROFILE|Optional|
-|AWS_ACCOUNT_ID|A 12 digit ID, used for identifying ECR repository and other|
-|AWS_REGION|used for constructing the ECR repository's URI|
-|ECR_REPO_NAME|name of the repository to push the custom Docker image to|
-|IMAGE_TAG|the tag of the image being pushed to the private ECR repository|
-|RDS_SG_ID|ID of the security group attached to the RDS instance, probably with inbound traffic allowed on port 5432 (PostgreSQL)|
-|ECS_SG_ID|ID of the security group attached to the ECS tasks, probably with inbound traffic allowed on port 8080 (Airflow webserver)|
-|RDS_INSTANCE_ID|ID of the RDS instance, used for finding the RDS endpoint and for stopping the RDS instance|
-|AIRFLOW_RDS_USER|Admin user of the RDS instance|
-|AIRFLOW_RDS_PASSWORD|Admin user's password|
-|ECS_CLUSTER_NAME|Name of the ECS cluster that will host the various tasks|
-|VPC_ID|Name of the VPC that the containers will be placed into, used for finding the subnets when constructing network configuration for `aws ecs run-task`|
+|`AWS_PROFILE`|Optional|
+|`AWS_REGION`|Used for constructing ECR repository URI, task definitions, etc.|
+|`AWS_ACCOUNT_ID`|Used for constructing ECR repository URI, etc.|
+|`VPC_ID`|for obtaining subnet IDs|
+|`ECS_CLUSTER_NAME`|Name of the ECS cluster to launch containers into|
+|`ECS_SG_ID`|The security attached to the various Airflow containers. Port 8080 should be opened to allow Airflow webserver|
+|`ECS_LOG_GROUP`|The CloudWatch log group that captures STDOUT from all Airflow containers, including core and workers|
+|`AIRFLOW_CORE_TASK_DEF`|The task definition used to launch Airflow webserver and Airflow scheduler containers|
+|`AIRFLOW_WORKER_TASK_DEF`|The task definition to launch Airflow task containers (see ECS Fargate Executor)|
+|`ECS_TASK_ROLE`|The IAM role assigned to all Airflow containers. This role needs read/write permission to the remote logging bucket, execution permission to launch Airflow tasks, and read/write permission to CloudWatch log groups|
+|`RDS_SG_ID`|The security group attached to the RDS instance. Appropriate ports should be opened for database, such as 5432 if running PostgreSQL|
+|`RDS_INSTANCE_ID`|The instance ID of the RDS instance. Used for getting the endpoint of the database server|
+|`AIRFLOW_RDS_USER`|Root user of the RDS instance|
+|`AIRFLOW_RDS_PASSWORD`|Root password of the RDS instance|
+|`ECR_REPO_NAME`|Name of the ECR repository that hosts the Airflow image|
+|`IMAGE_TAG`|Image tag of the Airflow image|
+|`REMOTE_LOGGING_BUCKET`|Name of the S3 bucket that stores Airflow task logs|
+|`REMOTE_LOGGING_CONN_ID`|Airflow connection ID used for connecting to the remote logging bucket|
 
-## The `run.sh` script
+## Barebone cluster
 The TL;DR is as follows:
 
 ```bash
@@ -160,3 +166,31 @@ This is probably because the default `ecsTaskExecutionRole` does not have IAM pe
 * Attach policy `AmazonS3FullAccess` (TODO: create a more restricted policy!)
 
 After that the task definition needs to be updated again to use the new `${ECS_TASK_ROLE}`. Register the updated task definition, then run the task. Now it works
+
+## ECS Fargate Executor
+There are several steps to configuring an ECS Fargate Executor:
+
+### Defining the Fargate Executor as a plugin
+```python
+from airflow.plugins_manager import AirflowPlugin
+from airflow_aws_executors import AwsEcsFargateExecutor
+
+
+class AWSExecutorPlugin(AirflowPlugin):
+    name = "aws_executors_plugin"
+    executors = [AwsEcsFargateExecutor]
+```
+
+### Set Airflow configurations in environment variables
+```
+AIRFLOW__ECS_FARGATE__CLUSTER
+AIRFLOW__ECS_FARGATE__CONTAINER_NAME
+AIRFLOW__ECS_FARGATE__TASK_DEFINITION
+AIRFLOW__ECS_FARGATE__SECURITY_GROUPS
+AIRFLOW__ECS_FARGATE__SUBNETS
+AIRFLOW__ECS_FARGATE__ASSIGN_PUBLIC_IP
+AIRFLOW__ECS_FARGATE__LAUNCH_TYPE
+```
+
+### Use a separate task definition
+The Fargate executor executes tasks by running ECS task(s). The task definition used for running Airflow webserver and scheduler is thus not suitable for running Airflow tasks. Hence we need to create two distinct task definitions: one for webserver/scheduler, the other for running tasks.
