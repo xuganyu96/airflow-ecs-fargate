@@ -17,6 +17,8 @@
 - [x] [ECS Fargate Executor](#ecs-fargate-executor)
     - [x] Switch Airflow's executor to ECS Fargate Executor
 
+- [ ] Manage secrets
+
 - [ ] A branch environment
     - [ ] Run a Postgres container on ECS Fargate, use Airflow CLI to initialize it
     - [ ] Run a MySQL container on ECS, be able to connect to it
@@ -194,3 +196,57 @@ AIRFLOW__ECS_FARGATE__LAUNCH_TYPE
 
 ### Use a separate task definition
 The Fargate executor executes tasks by running ECS task(s). The task definition used for running Airflow webserver and scheduler is thus not suitable for running Airflow tasks. Hence we need to create two distinct task definitions: one for webserver/scheduler, the other for running tasks.
+
+## Managing secrets
+While ECS can directly map secrets from AWS Secrets Manager into environment variables, for more secrets that cannot be trivially stored as a single string, such as `AIRFLOW__DATABASE__SQLALCHEMY_CONN` which can actually consist of multiple secret values.
+
+One way to configure environment variables with secret values is to use a `wrapper.sh` script that sources and export environment variables from some `.env` file, then passes the arguments to the actual `entrypoint.sh`. The `wrapper.sh` script would look something like this:
+
+```bash
+#!/bin/bash
+
+# env file makes AWS CLI calls to query Secrets Manager
+source ${CONTEXT_ENV:-"dev"}.env
+
+# The actual entrypoint is located at /entrypoint in the official Airflow image
+/entrypoint ${@}
+```
+
+Then we can use AWS CLI in the `env` file to query AWS Secrets Manager.
+
+Note that the official Airflow image does not have AWS CLI installed, so we will need to install AWS CLI when extending the official image:
+
+```Dockerfile
+ARG BASE_IMG="apache/airflow:2.5.3-python3.10"
+
+FROM ${BASE_IMG}
+
+# install AWS CLI
+USER root
+RUN apt-get update \
+RUN apt-get update \
+    && apt-get install unzip \
+    && curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
+-o "awscliv2.zip" \
+    && unzip awscliv2.zip \
+    && sudo ./aws/install
+RUN usermod -aG root airflow
+USER airflow
+
+# Copy the env and wrapper script
+COPY dev.env /dev.env
+COPY wrapper.sh /wrapper.sh
+ENTRYPOINT ["/usr/bin/dumb-init", "--", "/wrapper.sh"]
+
+COPY requirements.txt ./requirements.txt
+
+COPY airflow_home/dags /opt/airflow/dags
+COPY airflow_home/plugins /opt/airflow/plugins
+COPY airflow_home/config /opt/airflow/config
+COPY airflow_home/webserver_config.py /opt/airflow/webserver_config.py
+
+
+
+RUN pip install --upgrade pip wheel setuptools \
+    && pip install -r requirements.txt
+```
