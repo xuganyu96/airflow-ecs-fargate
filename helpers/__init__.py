@@ -63,101 +63,11 @@ def get_rds_endpoint(rds_instance_id: str, rds) -> str | None:
 def generate_airflow_core_task_def(
     image_uri: str,
     aws_account_id: str,
-    airflow_rds_user: str,
-    airflow_rds_password: str,
-    airflow_rds_db: str,
-    rds_endpoint: str,
-    subnet_ids: list[str],
 ):
     """Return a dictionary that defines the task definition for the Airflow
     cluster
     """
-    sqla_uri = f"postgresql+psycopg2://" \
-    f"{airflow_rds_user}:{airflow_rds_password}" \
-    f"@{rds_endpoint}:5432/{airflow_rds_db}"
-    remote_logging_bucket = getenv_or_exit("REMOTE_LOGGING_BUCKET")
-    remote_logging_conn_id = getenv_or_exit("REMOTE_LOGGING_CONN_ID")
     ecs_task_role = getenv_or_exit("ECS_TASK_ROLE")
-
-    env_vars = [
-        {
-            "name": "AIRFLOW__CORE__EXECUTOR",
-            "value": "aws_executors_plugin.AwsEcsFargateExecutor"
-        },
-        {
-            "name": "AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION",
-            "value": "true"
-        },
-        {
-            "name": "AIRFLOW__CORE__LOAD_EXAMPLES",
-            "value": "false"
-        },
-        {
-            "name": "AIRFLOW__CORE__PARALLELISM",
-            "value": "4"
-        },
-        {
-            "name": "AIRFLOW__DATABASE__SQL_ALCHEMY_CONN",
-            "value": sqla_uri
-        },
-        {
-            "name": "AIRFLOW__DATABASE__LOAD_DEFAULT_CONNECTIONS",
-            "value": "false"
-        },
-        {
-            "name": "AIRFLOW__LOGGING__LOGGING_CONFIG_CLASS",
-            "value": "log_config.LOG_CONFIG",
-        },
-        {
-            "name": "AIRFLOW__LOGGING__REMOTE_LOGGING",
-            "value": "True",
-        },
-        {
-            "name": "AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER",
-            "value": f"s3://{remote_logging_bucket}/stage_airflow",
-        },
-        {
-            "name": "AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID",
-            "value": remote_logging_conn_id,
-        },
-        {
-            "name": "AIRFLOW__LOGGING__ENCRYPT_S3_LOG",
-            "value": "False",
-        },
-        {
-            "name": "AIRFLOW__ECS_FARGATE__REGION",
-            "value": getenv_or_exit("AWS_REGION"),
-        },
-        {
-            "name": "AIRFLOW__ECS_FARGATE__CLUSTER",
-            "value": getenv_or_exit("ECS_CLUSTER_NAME"),
-        },
-        {
-            "name": "AIRFLOW__ECS_FARGATE__CONTAINER_NAME",
-            "value": "worker",
-        },
-        {
-            "name": "AIRFLOW__ECS_FARGATE__TASK_DEFINITION",
-            "value": getenv_or_exit("AIRFLOW_WORKER_TASK_DEF"),
-        },
-        {
-            "name": "AIRFLOW__ECS_FARGATE__SECURITY_GROUPS",
-            "value": getenv_or_exit("ECS_SG_ID"),
-        },
-        {
-            "name": "AIRFLOW__ECS_FARGATE__SUBNETS",
-            "value": ",".join(subnet_ids),
-        },
-        {
-            "name": "AIRFLOW__ECS_FARGATE__ASSIGN_PUBLIC_IP",
-            "value": "ENABLED",
-        },
-        {
-            "name": "AIRFLOW__ECS_FARGATE__LAUNCH_TYPE",
-            "value": "FARGATE",
-        },
-
-    ]
 
     return {
         "family": getenv_or_exit("AIRFLOW_CORE_TASK_DEF"),
@@ -177,7 +87,7 @@ def generate_airflow_core_task_def(
                 "command": [
                     "webserver"
                 ],
-                "environment": env_vars,
+                "environment": [],
                 "environmentFiles": [],
                 "mountPoints": [],
                 "volumesFrom": [],
@@ -201,7 +111,7 @@ def generate_airflow_core_task_def(
                 "command": [
                     "scheduler"
                 ],
-                "environment": env_vars,
+                "environment": [],
                 "environmentFiles": [],
                 "mountPoints": [],
                 "volumesFrom": [],
@@ -233,100 +143,11 @@ def generate_airflow_core_task_def(
 def generate_airflow_worker_task_def(
     image_uri: str,
     aws_account_id: str,
-    airflow_rds_user: str,
-    airflow_rds_password: str,
-    airflow_rds_db: str,
-    rds_endpoint: str,
-    subnet_ids: list[str],
 ):
     """Return a dictionary that defines the task definition for the Airflow
     cluster
     """
-    sqla_uri = f"postgresql+psycopg2://" \
-    f"{airflow_rds_user}:{airflow_rds_password}" \
-    f"@{rds_endpoint}:5432/{airflow_rds_db}"
-    remote_logging_bucket = getenv_or_exit("REMOTE_LOGGING_BUCKET")
-    remote_logging_conn_id = getenv_or_exit("REMOTE_LOGGING_CONN_ID")
     ecs_task_role = getenv_or_exit("ECS_TASK_ROLE")
-
-    env_vars = [
-        {
-            "name": "AIRFLOW__CORE__EXECUTOR",
-            "value": "aws_executors_plugin.AwsEcsFargateExecutor"
-        },
-        {
-            "name": "AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION",
-            "value": "true"
-        },
-        {
-            "name": "AIRFLOW__CORE__LOAD_EXAMPLES",
-            "value": "false"
-        },
-        {
-            "name": "AIRFLOW__CORE__PARALLELISM",
-            "value": "4"
-        },
-        {
-            "name": "AIRFLOW__DATABASE__SQL_ALCHEMY_CONN",
-            "value": sqla_uri
-        },
-        {
-            "name": "AIRFLOW__DATABASE__LOAD_DEFAULT_CONNECTIONS",
-            "value": "false"
-        },
-        {
-            "name": "AIRFLOW__LOGGING__LOGGING_CONFIG_CLASS",
-            "value": "log_config.LOG_CONFIG",
-        },
-        {
-            "name": "AIRFLOW__LOGGING__REMOTE_LOGGING",
-            "value": "True",
-        },
-        {
-            "name": "AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER",
-            "value": f"s3://{remote_logging_bucket}/stage_airflow",
-        },
-        {
-            "name": "AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID",
-            "value": remote_logging_conn_id,
-        },
-        {
-            "name": "AIRFLOW__LOGGING__ENCRYPT_S3_LOG",
-            "value": "False",
-        },
-        {
-            "name": "AIRFLOW__ECS_FARGATE__REGION",
-            "value": getenv_or_exit("AWS_REGION"),
-        },
-        {
-            "name": "AIRFLOW__ECS_FARGATE__CLUSTER",
-            "value": getenv_or_exit("ECS_CLUSTER_NAME"),
-        },
-        {
-            "name": "AIRFLOW__ECS_FARGATE__CONTAINER_NAME",
-            "value": "worker",
-        },
-        {
-            "name": "AIRFLOW__ECS_FARGATE__TASK_DEFINITION",
-            "value": getenv_or_exit("AIRFLOW_WORKER_TASK_DEF"),
-        },
-        {
-            "name": "AIRFLOW__ECS_FARGATE__SECURITY_GROUPS",
-            "value": getenv_or_exit("ECS_SG_ID"),
-        },
-        {
-            "name": "AIRFLOW__ECS_FARGATE__SUBNETS",
-            "value": ",".join(subnet_ids),
-        },
-        {
-            "name": "AIRFLOW__ECS_FARGATE__ASSIGN_PUBLIC_IP",
-            "value": "ENABLED",
-        },
-        {
-            "name": "AIRFLOW__ECS_FARGATE__LAUNCH_TYPE",
-            "value": "FARGATE",
-        },
-    ]
 
     return {
         "family": getenv_or_exit("AIRFLOW_WORKER_TASK_DEF"),
@@ -340,7 +161,7 @@ def generate_airflow_worker_task_def(
                 "command": [
                     "scheduler"
                 ],
-                "environment": env_vars,
+                "environment": [],
                 "environmentFiles": [],
                 "mountPoints": [],
                 "volumesFrom": [],

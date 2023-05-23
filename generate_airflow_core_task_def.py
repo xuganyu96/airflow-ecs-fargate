@@ -24,10 +24,5 @@ if __name__ == "__main__":
     task_definition = generate_airflow_core_task_def(
         image_uri,
         aws_account_id,
-        airflow_rds_user=getenv_or_exit("AIRFLOW_RDS_USER"),
-        airflow_rds_password=getenv_or_exit("AIRFLOW_RDS_PASSWORD"),
-        airflow_rds_db="airflow",
-        rds_endpoint=rds_endpoint,
-        subnet_ids=subnet_ids,
     )
     print(json.dumps(task_definition))
