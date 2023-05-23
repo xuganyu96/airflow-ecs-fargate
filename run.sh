@@ -165,6 +165,9 @@ case $1 in
     aws iam attach-role-policy \
         --role-name ${ECS_TASK_ROLE} \
         --policy-arn "arn:aws:iam::aws:policy/AmazonECS_FullAccess"
+    aws iam attach-role-policy \
+        --role-name ${ECS_TASK_ROLE} \
+        --policy-arn "arn:aws:iam::aws:policy/SecretsManagerReadWrite"
 ;;
 "delete-task-role")
     aws iam detach-role-policy \
@@ -176,6 +179,9 @@ case $1 in
     aws iam detach-role-policy \
         --role-name ${ECS_TASK_ROLE} \
         --policy-arn "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+    aws iam detach-role-policy \
+        --role-name ${ECS_TASK_ROLE} \
+        --policy-arn "arn:aws:iam::aws:policy/SecretsManagerReadWrite"
     aws iam delete-role \
         --role-name ${ECS_TASK_ROLE}
 ;;
@@ -242,6 +248,32 @@ case $1 in
 ;;
 "stop-all-tasks")
     python stop_all_tasks.py
+;;
+"create-rds-secret")
+    # Store database credentials into a secret on secrets manager
+    export RDS_ENDPOINT=$(aws rds describe-db-instances \
+    --db-instance-identifier ${RDS_INSTANCE_ID} \
+    --query "DBInstances[0].Endpoint.Address" \
+    | tr -d '"')
+    echo "RDS endpoint is ${RDS_ENDPOINT}"
+    
+    aws secretsmanager create-secret \
+        --name ${RDS_SECRET_ID} \
+        --description "Database credentials for Airflow's backend" \
+        --secret-string "{\"host\": \"${RDS_ENDPOINT}\", \"port\": \"5432\", \"login\": \"${AIRFLOW_RDS_USER}\", \"password\":\"${AIRFLOW_RDS_PASSWORD}\"}"
+;;
+"delete-rds-secret")
+    aws secretsmanager delete-secret \
+        --secret-id ${RDS_SECRET_ID}
+;;
+"create-airflow-config-secret")
+    # TODO: contains the following keys:
+    # logging__remote_base_log_folder
+    # ecs_fargate__security_groups
+    # ecs_fargate__subnets
+;;
+"delete-airflow-config-secret")
+    # TODO: delete the airflow config secret
 ;;
 *)
     echo "Bad command"

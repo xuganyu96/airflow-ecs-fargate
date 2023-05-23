@@ -32,7 +32,40 @@
     - [ ] Switch from DB authentication to OAuth
     - [ ] First-time user sign up
 
-# Getting started
+## TL;DR
+
+```bash
+# chmod +x run.sh
+# Make sure your virtual environment is active since some of commands run
+# Python scripts that use external libraries like boto3 and airflow
+# source .env
+
+# Setup, in this order
+./run.sh create-ecr-repository
+./run.sh create-rds-instance
+./run.sh get-rds-endpoint
+./run.sh create-rds-secret
+./run.sh deploy-docker-image
+./run.sh airflow-initialize
+./run.sh login-to-rds
+./run.sh create-ecs-cluster
+./run.sh create-task-role
+./run.sh create-ecs-log-group
+./run.sh create-remote-logging-bucket
+./run.sh register-task-definition
+./run.sh run-task
+
+# Teardown, in this order
+./run.sh stop-all-tasks
+./run.sh delete-ecs-cluster
+./run.sh delete-rds-instance
+./run.sh delete-ecr-repository
+./run.sh delete-task-role
+./run.sh delete-ecs-log-group
+./run.sh delete-remote-logging-bucket
+./run.sh delete-rds-secret
+```
+
 ## Developer setup
 We will stick with the simplest setup so we can focus on the deployment part.
 
@@ -96,39 +129,6 @@ The development environment needs the following environment variables (I choose 
 |`IMAGE_TAG`|Image tag of the Airflow image|
 |`REMOTE_LOGGING_BUCKET`|Name of the S3 bucket that stores Airflow task logs|
 |`REMOTE_LOGGING_CONN_ID`|Airflow connection ID used for connecting to the remote logging bucket|
-
-## Barebone cluster
-The TL;DR is as follows:
-
-```bash
-# chmod +x run.sh
-# Make sure your virtual environment is active since some of commands run
-# Python scripts that use external libraries like boto3 and airflow
-# source .env
-
-# Setup, in this order
-./run.sh create-ecr-repository
-./run.sh deploy-docker-image
-./run.sh create-rds-instance
-./run.sh get-rds-endpoint
-./run.sh airflow-initialize
-./run.sh login-to-rds
-./run.sh create-ecs-cluster
-./run.sh create-task-role
-./run.sh create-ecs-log-group
-./run.sh create-remote-logging-bucket
-./run.sh register-task-definition
-./run.sh run-task
-
-# Teardown, in this order
-./run.sh stop-all-tasks
-./run.sh delete-ecs-cluster
-./run.sh delete-rds-instance
-./run.sh delete-ecr-repository
-./run.sh delete-task-role
-./run.sh delete-ecs-log-group
-./run.sh delete-remote-logging-bucket
-```
 
 ## S3 Remote logging
 According to [Amazon's documentation](https://airflow.apache.org/docs/apache-airflow-providers-amazon/stable/logging/s3-task-handler.html), we need the following configurations to set remote logging to S3.
@@ -198,55 +198,20 @@ AIRFLOW__ECS_FARGATE__LAUNCH_TYPE
 The Fargate executor executes tasks by running ECS task(s). The task definition used for running Airflow webserver and scheduler is thus not suitable for running Airflow tasks. Hence we need to create two distinct task definitions: one for webserver/scheduler, the other for running tasks.
 
 ## Managing secrets
-While ECS can directly map secrets from AWS Secrets Manager into environment variables, for more secrets that cannot be trivially stored as a single string, such as `AIRFLOW__DATABASE__SQLALCHEMY_CONN` which can actually consist of multiple secret values.
+In the configurations discussed so far, no credentials or potentially sensitive data are protected, which is not acceptable on a production environment. For example, database connection parameters are usually stored in AWS Secrets Manager and encrypted at rest, which means that configuration such as `AIRFLOW__DATABASE__SQLALCHEMY_CONN` cannot be constructed in plaintext at task definition, especially since it is a non-trivial concatenation of multiple secrets.
 
-One way to configure environment variables with secret values is to use a `wrapper.sh` script that sources and export environment variables from some `.env` file, then passes the arguments to the actual `entrypoint.sh`. The `wrapper.sh` script would look something like this:
+AWS ECS does support [specifying secrets in task definition](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/secrets-envvar-secrets-manager.html), but it is limited to simple copy-paste. For non-trivially complex secrets like `AIRFLOW__DATABASE__SQLALCHEMY_CONN` that take some secret values and format them in specific ways, this solution will not suffice.
+
+Instead, a wrapper shell script will be used to run additional commands (such as obtaining secrets and sourcing environment variables) before passing the user's command to the actual `entrypoint.sh` script. The wrapper shell script would look something like this:
 
 ```bash
 #!/bin/bash
 
-# env file makes AWS CLI calls to query Secrets Manager
-source ${CONTEXT_ENV:-"dev"}.env
+# additional steps, such as:
+# source variables.env
 
-# The actual entrypoint is located at /entrypoint in the official Airflow image
 /entrypoint ${@}
 ```
 
-Then we can use AWS CLI in the `env` file to query AWS Secrets Manager.
+We will first prove that this wrapper script concept works by moving all environment variables from task definitions to the wrapper script.
 
-Note that the official Airflow image does not have AWS CLI installed, so we will need to install AWS CLI when extending the official image:
-
-```Dockerfile
-ARG BASE_IMG="apache/airflow:2.5.3-python3.10"
-
-FROM ${BASE_IMG}
-
-# install AWS CLI
-USER root
-RUN apt-get update \
-RUN apt-get update \
-    && apt-get install unzip \
-    && curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
--o "awscliv2.zip" \
-    && unzip awscliv2.zip \
-    && sudo ./aws/install
-RUN usermod -aG root airflow
-USER airflow
-
-# Copy the env and wrapper script
-COPY dev.env /dev.env
-COPY wrapper.sh /wrapper.sh
-ENTRYPOINT ["/usr/bin/dumb-init", "--", "/wrapper.sh"]
-
-COPY requirements.txt ./requirements.txt
-
-COPY airflow_home/dags /opt/airflow/dags
-COPY airflow_home/plugins /opt/airflow/plugins
-COPY airflow_home/config /opt/airflow/config
-COPY airflow_home/webserver_config.py /opt/airflow/webserver_config.py
-
-
-
-RUN pip install --upgrade pip wheel setuptools \
-    && pip install -r requirements.txt
-```
